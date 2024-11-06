@@ -9,36 +9,83 @@
 # 회사 이름, 직무 제목, 설명 및 직무 링크를 추출하세요.
 
 
-import requests
+from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
+import re
 from pprint import pprint
 
+
 URL = "https://berlinstartupjobs.com"
+jobs_db = []
 
-response = requests.get(f"{URL}/engineering/")
-content = response.content
+def activate_page(url):
+	p = sync_playwright().start()
+	browser = p.chromium.launch(headless=False)
+	page = browser.new_page()
+	page.goto(url)
+	content = page.content()
+	soup = BeautifulSoup(content, 'html.parser')
+	p.stop()
+	return (page, soup)
 
-soup = BeautifulSoup(content, 'html.parser')
+def get_info_of_engineering_jobs():
+	active_page_soup = activate_page(f"{URL}/engineering/")
+	page = active_page_soup[0]
+	soup = active_page_soup[1]
+	engineering_jobs = get_skill_db(page, soup)
+	return engineering_jobs
 
-jobs = soup.find_all("li", class_="bjs-jlid")
-print(jobs)
-job_db = []
+def collecting_skill_areas_jobs_db(url):
+	active_page_soup = activate_page(f"{URL}/engineering/")
+	# page = active_page_soup[0]
+	soup = active_page_soup[1]
+	skill_sets = get_skillset_dict(soup)
+	for (skill_area, link) in skill_sets.items():
+		job_db = get_skill_db(link)
+		job_db_dict = {skill_area: job_db}
+		jobs_db.append(job_db_dict)
+	return jobs_db
 
-for job in jobs:
-	first_link = job.find("a")
-	title = first_link.text
 
-	company = job.find("a", class_="bjs-jlid__b").text
+def get_skillset_dict(soup):
+	skill_dict = {}
+	popular_skills = soup.find_all("a", class_="bjs-bl--dolphin")
+	for skill in popular_skills:
+		skill_name = re.sub("\n|\t", "", skill.text.split(" ")[0])
+		skill_dict[skill_name] = skill['href']
+	return skill_dict
 
-	job_description = job.find("div", class_="bjs-jlid__description").text
+def get_skill_db(url):
+	jobs_according_to_skills = activate_page(url)
+	page = jobs_according_to_skills[0]
+	soup = jobs_according_to_skills[1]
+	job_db = []
+	job_pages = soup.find_all(class_="page-numbers")
+	number_of_ages = 0
+	if job_pages:
+		number_of_pages = len(job_pages)
+	else:
+		number_of_pages = 2
 
-	link = first_link["href"]
+	for i in range(1, number_of_pages):
+		if i != 1:
+			page.goto(f"{URL}/engineering/page/{i}/")
+			newContent = page.content()
+			soup = BeautifulSoup(newContent, 'html.parser')
+		jobs = soup.find_all("li", class_="bjs-jlid")
+		for job in jobs:
+			first_link = job.find("a")
+			title = first_link.text
+			company = job.find("a", class_="bjs-jlid__b").text
+			job_description = re.sub("\n|\t", "", job.find("div", class_="bjs-jlid__description").text)
+			link = first_link["href"]
+			job_data = dict(
+				company=company,
+				job_title=title,
+				job_description=job_description,
+				link=link
+			)
+			job_db.append(job_data)
+		return job_db
 
-	job_data = dict(
-		company=company,
-		job_title=title,
-		job_description=job_description,
-		link=link
-	)
-	job_db.append(job_data)
-print(job_db)
+pprint(collecting_skill_areas_jobs_db(URL))
